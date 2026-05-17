@@ -42,6 +42,9 @@ Once training starts, checkpoints are saved every 1000 steps. You can generate t
 ```bash
 uv run generate.py checkpoint_2000.pt --prompt "Nel mezzo del cammin" --max_new_tokens 300
 ```
+This is an example:
+<img width="937" height="299" alt="image" src="https://github.com/user-attachments/assets/585c703f-3167-4bc5-bfb8-8ce39583db2e" />
+
 
 ## Dataset
 The model is trained on `data/divina_commedia.txt`, which contains the full text of Dante's *Divine Comedy* (Inferno, Purgatorio, Paradiso).
