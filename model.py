@@ -12,6 +12,7 @@ class GPTConfig:
     n_layer: int = 6           # Numero di blocchi Transformer impilati
     n_head: int = 6            # Numero di teste nell'attenzione (n_embd deve essere divisibile per n_head)
     n_embd: int = 384          # Dimensione del vettore di embedding (spazio latente)
+    dropout: float = 0.2       # Percentuale di neuroni "spenti" casualmente in training (anti-overfitting)
 
 # --- ATTENZIONE (IL CUORE) ---
 class CausalSelfAttention(nn.Module):
@@ -19,12 +20,15 @@ class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
+        dropout = getattr(config, "dropout", 0.0)
         # Proiezione lineare per ottenere Query, Key e Value in un colpo solo
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
         # Proiezione finale per combinare le teste
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.resid_dropout = nn.Dropout(dropout)
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        self.dropout = dropout
 
     def forward(self, x):
         B, T, C = x.shape # Batch size, Lunghezza sequenza, Canali (n_embd)
@@ -42,13 +46,17 @@ class CausalSelfAttention(nn.Module):
 
         # 3. Scaled Dot-Product Attention con maschera causale (is_causal=True)
         # Questo permette a ogni token di guardare solo i precedenti
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        y = F.scaled_dot_product_attention(
+            q, k, v,
+            dropout_p=self.dropout if self.training else 0.0,
+            is_causal=True,
+        )
 
         # 4. Ricombiniamo le teste
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         
-        # 5. Proiezione finale di output
-        return self.c_proj(y)
+        # 5. Proiezione finale di output con dropout
+        return self.resid_dropout(self.c_proj(y))
 
 # --- ELABORAZIONE (IL CERVELLO) ---
 class MLP(nn.Module):
@@ -64,17 +72,20 @@ class MLP(nn.Module):
     """
     def __init__(self, config):
         super().__init__()
+        dropout = getattr(config, "dropout", 0.0)
         # Espandiamo la dimensione di 4 volte per dare al modello "spazio di calcolo"
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd)
         # Funzione di attivazione non lineare (una versione più fluida della ReLU)
         self.gelu = nn.GELU(approximate='tanh')
         # Proiettiamo indietro alla dimensione originale
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         x = self.c_fc(x)
         x = self.gelu(x)
         x = self.c_proj(x)
+        x = self.dropout(x)
         return x
 
 # --- IL BLOCCO TRANSFORMER ---
@@ -102,16 +113,18 @@ class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        dropout = getattr(config, "dropout", 0.0)
 
         # Contenitore per i moduli del Transformer
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd), # Word Token Embedding
             wpe = nn.Embedding(config.block_size, config.n_embd), # Word Position Embedding
-            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]), # 6 Blocchi
+            drop = nn.Dropout(dropout),                           # Dropout sugli embedding iniziali
+            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]), # Blocchi Transformer
             ln_f = nn.LayerNorm(config.n_embd), # Normalizzazione finale
         ))
         
-        # Testa finale che mappa i vettori ai 65 possibili caratteri
+        # Testa finale che mappa i vettori ai possibili caratteri
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
         # WEIGHT TYING: condividiamo i pesi tra l'input e l'output
@@ -123,12 +136,12 @@ class GPT(nn.Module):
         # Creiamo gli indici di posizione [0, 1, ..., T-1]
         pos = torch.arange(0, T, dtype=torch.long, device=device)
 
-        # 1. Recuperiamo gli embedding e sommiamoli
+        # 1. Recuperiamo gli embedding, sommiamoli e applichiamo il dropout
         tok_emb = self.transformer.wte(idx) # (B, T, n_embd)
         pos_emb = self.transformer.wpe(pos) # (T, n_embd)
-        x = tok_emb + pos_emb               # Somma con broadcasting (B, T, n_embd)
+        x = self.transformer.drop(tok_emb + pos_emb) # (B, T, n_embd)
 
-        # 2. Passiamo attraverso i 6 blocchi Transformer
+        # 2. Passiamo attraverso i blocchi Transformer
         for block in self.transformer.h:
             x = block(x)
 

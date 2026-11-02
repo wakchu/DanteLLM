@@ -49,7 +49,26 @@ def load_data(filepath, block_size, batch_size, device):
 
 # --- 2. SETUP DISPOSITIVO ---
 def get_device():
-    """Forziamo l'uso della CPU per compatibilità con hardware datato."""
+    """
+    Seleziona automaticamente la GPU (CUDA su NVIDIA / MPS su Mac) se disponibile
+    e realmente compatibile con la versione installata di PyTorch, altrimenti usa la CPU.
+    """
+    if torch.cuda.is_available():
+        try:
+            # Verifica che i kernel CUDA di PyTorch supportino l'architettura della GPU
+            # (es. RTX 3050 Ti con Compute Capability 8.6 funziona su GPU;
+            #  schede datate come MX130 CC 5.0 fanno fallback sicuro su CPU)
+            major, minor = torch.cuda.get_device_capability(0)
+            if (major, minor) >= (7, 0):
+                _ = torch.zeros(1, device="cuda")
+                return torch.device("cuda")
+            else:
+                gpu_name = torch.cuda.get_device_name(0)
+                print(f"Nota: GPU {gpu_name} (CC {major}.{minor}) non supportata dai binari PyTorch correnti, uso CPU.")
+        except Exception:
+            pass
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
     return torch.device("cpu")
 
 # --- 3. GESTIONE VELOCITÀ DI APPRENDIMENTO (Learning Rate) ---
@@ -64,10 +83,13 @@ def get_lr(step, warmup_steps, max_steps, max_lr, min_lr):
 
 # --- 4. IL TRAINING LOOP ---
 def train(data_path, max_steps=5000, batch_size=64, 
-          n_layer=4, n_head=4, n_embd=256, block_size=128):
+          n_layer=4, n_head=4, n_embd=256, block_size=256, dropout=0.2):
     
     device = get_device()
-    print(f"Dispositivo in uso: {device}")
+    if device.type == "cuda":
+        print(f"Dispositivo in uso: {device} ({torch.cuda.get_device_name(0)})")
+    else:
+        print(f"Dispositivo in uso: {device}")
 
     # Carichiamo i dati
     get_train_batch, get_val_batch, vocab_size, stoi, itos = load_data(
@@ -81,14 +103,15 @@ def train(data_path, max_steps=5000, batch_size=64,
         n_layer=n_layer,
         n_head=n_head,
         n_embd=n_embd,
+        dropout=dropout,
     )
     model = GPT(config).to(device)
     
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"Modello creato: {n_params / 1e6:.1f}M di parametri")
+    print(f"Modello creato: {n_params / 1e6:.2f}M di parametri (block_size={block_size}, dropout={dropout})")
 
-    # Optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
+    # Optimizer con weight_decay più alto (0.1) per contrastare l'overfitting
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.1)
 
     max_lr = 1e-3
     min_lr = max_lr * 0.1
@@ -96,6 +119,7 @@ def train(data_path, max_steps=5000, batch_size=64,
 
     loss_log = {"steps": [], "train": [], "val": []}
     val_loss = 0.0
+    best_val_loss = float("inf")
 
     pbar = tqdm(range(max_steps), desc="Addestramento")
     for step in pbar:
@@ -110,7 +134,23 @@ def train(data_path, max_steps=5000, batch_size=64,
                     _, loss = model(x, y)
                     val_losses.append(loss.item())
                 val_loss = sum(val_losses) / len(val_losses)
-                tqdm.write(f"Step {step:5d} | Val Loss: {val_loss:.4f}")
+                is_best = val_loss < best_val_loss
+                marker = " *BEST*" if is_best else ""
+                tqdm.write(f"Step {step:5d} | Val Loss: {val_loss:.4f}{marker}")
+
+                # Salviamo il modello migliore ogni volta che la Val Loss scende
+                if is_best and step > 0:
+                    best_val_loss = val_loss
+                    torch.save({
+                        "step": step,
+                        "val_loss": best_val_loss,
+                        "model_state_dict": model.state_dict(),
+                        "config": config,
+                        "stoi": stoi,
+                        "itos": itos,
+                    }, "model_best.pt")
+                elif is_best:
+                    best_val_loss = val_loss
             model.train()
 
         # --- Aggiornamento Learning Rate ---
@@ -127,7 +167,7 @@ def train(data_path, max_steps=5000, batch_size=64,
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
-        pbar.set_postfix(loss=f"{loss.item():.4f}", lr=f"{lr:.2e}")
+        pbar.set_postfix(loss=f"{loss.item():.4f}", val=f"{val_loss:.4f}", lr=f"{lr:.2e}")
 
         # --- Salvataggio Log ---
         loss_log["steps"].append(step)
@@ -165,7 +205,7 @@ def train(data_path, max_steps=5000, batch_size=64,
     with open("loss_log.json", "w") as f:
         json.dump(loss_log, f)
 
-    print("Addestramento completato! Modello salvato come 'model_final.pt'")
+    print(f"Addestramento completato! Miglior modello salvato in 'model_best.pt' (Val Loss: {best_val_loss:.4f}) e ultimo step in 'model_final.pt'")
     return model, stoi, itos
 
 if __name__ == "__main__":

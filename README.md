@@ -26,8 +26,14 @@ This project uses [uv](https://docs.astral.sh/uv/) for fast and reliable depende
 ### 1. Setup
 Clone the repository and install dependencies:
 ```bash
-cd myLLM
+cd DanteLLM
 uv sync
+```
+
+#### GPU Support on Windows (NVIDIA CUDA)
+On Windows, `uv sync` installs the CPU-only version of PyTorch by default. To enable NVIDIA GPU acceleration (CUDA) on Windows, run this command once after `uv sync`:
+```powershell
+uv pip install torch --index-url https://download.pytorch.org/whl/cu126 --reinstall
 ```
 
 ### 2. Training
@@ -35,27 +41,28 @@ To start training the model on the provided Dante dataset:
 ```bash
 uv run train.py
 ```
-*Note: The model is currently configured to run on the **CPU** for maximum compatibility. Training might take 20-40 minutes depending on your hardware.*
+*Note: The script automatically uses a compatible **CUDA GPU** (or Apple Silicon `mps`) if available, and safely falls back to the **CPU** on older hardware. During training, the best checkpoint based on validation loss is automatically saved as `model_best.pt`.*
 
 ### 3. Text Generation
-Once training starts, checkpoints are saved every 1000 steps. You can generate text from a specific checkpoint at any time:
+Once training starts, checkpoints are saved every 1000 steps, and the best validation model is saved to `model_best.pt`. You can generate text from a checkpoint at any time:
 ```bash
-uv run generate.py checkpoint_2000.pt --prompt "Nel mezzo del cammin" --max_new_tokens 300
+uv run generate.py model_best.pt --prompt "Nel mezzo del cammin" --max_new_tokens 300 --temperature 0.75
 ```
 This is an example:
 <img width="937" height="299" alt="image" src="https://github.com/user-attachments/assets/585c703f-3167-4bc5-bfb8-8ce39583db2e" />
 
 
 ## Dataset
-The model is trained on `data/divina_commedia.txt`, which contains the full text of Dante's *Divine Comedy* (Inferno, Purgatorio, Paradiso).
-- **Total characters**: ~300,000
-- **Unique characters (Vocab)**: 60
+The model is trained on `data/divina_commedia.txt`, which contains the complete text of Dante's *Divine Comedy* (Inferno, Purgatorio, Paradiso).
+- **Total characters**: ~535,500
+- **Unique characters (Vocab)**: 77
 
 ## Model Configuration
 - **Layers**: 4
 - **Attention Heads**: 4
 - **Embedding Dim**: 256
-- **Context Window (Block Size)**: 128 tokens
+- **Context Window (Block Size)**: 256 tokens
+- **Dropout**: 0.2
 
 ## Acknowledgments
 Inspired by Andrej Karpathy's [nanoGPT](https://github.com/karpathy/nanoGPT) and the "LLM from Scratch" tutorial.

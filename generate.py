@@ -43,8 +43,8 @@ def generate(model, prompt, stoi, itos, max_new_tokens=100, temperature=1.0, top
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Genera testo da un checkpoint GPT addestrato")
-    parser.add_argument("checkpoint", help="Percorso del file checkpoint (es. model_final.pt)")
-    parser.add_argument("--prompt", default="To be or not", help="Testo iniziale")
+    parser.add_argument("checkpoint", help="Percorso del file checkpoint (es. model_best.pt o model_final.pt)")
+    parser.add_argument("--prompt", default="Nel mezzo del cammin", help="Testo iniziale")
     parser.add_argument("--max_new_tokens", type=int, default=200, help="Numero di caratteri da generare")
     parser.add_argument("--temperature", type=float, default=0.8, help="Temperatura (bassa = deterministico, alta = creativo)")
     parser.add_argument("--top_k", type=int, default=40, help="Campiona solo dai top-k caratteri più probabili")
@@ -54,21 +54,28 @@ if __name__ == "__main__":
     if args.seed is not None:
         torch.manual_seed(args.seed)
 
+    # Selezione automatica del dispositivo (GPU CUDA compatibile oppure CPU)
+    device = torch.device("cpu")
+    if torch.cuda.is_available():
+        try:
+            if torch.cuda.get_device_capability(0) >= (7, 0):
+                _ = torch.zeros(1, device="cuda")
+                device = torch.device("cuda")
+        except Exception:
+            pass
+
     # Caricamento del modello dal checkpoint
-    checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
+    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     config = checkpoint["config"]
     stoi = checkpoint["stoi"]
     itos = checkpoint["itos"]
 
     model = GPT(config)
     model.load_state_dict(checkpoint["model_state_dict"])
-    
-    # Forziamo l'uso della CPU per compatibilità
-    device = torch.device("cpu")
     model.to(device)
 
     output = generate(model, args.prompt, stoi, itos,
                       max_new_tokens=args.max_new_tokens,
                       temperature=args.temperature,
                       top_k=args.top_k)
-    print(f"\n--- Testo Generato ---\n{output}\n----------------------")
+    print(f"\n--- Testo Generato ({device}) ---\n{output}\n----------------------")
