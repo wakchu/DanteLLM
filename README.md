@@ -30,18 +30,15 @@ cd DanteLLM
 uv sync
 ```
 
-#### GPU Support on Windows (NVIDIA CUDA)
-On Windows, `uv sync` installs the CPU-only version of PyTorch by default. To enable NVIDIA GPU acceleration (CUDA) on Windows, run this command once after `uv sync`:
-```powershell
-uv pip install torch --index-url https://download.pytorch.org/whl/cu126 --reinstall
-```
+#### GPU & CPU Support
+`pyproject.toml` is pre-configured to install the CUDA-enabled PyTorch build (`cu126`) on Windows and Linux via `uv sync` / `uv run`, which natively supports both NVIDIA GPUs and CPU execution (as well as Apple Silicon `mps` on macOS). No manual PyTorch reinstallation is required.
 
 ### 2. Training
 To start training the model on the provided Dante dataset:
 ```bash
 uv run train.py
 ```
-*Note: The script automatically uses a compatible **CUDA GPU** (or Apple Silicon `mps`) if available, and safely falls back to the **CPU** on older hardware. During training, the best checkpoint based on validation loss is automatically saved as `model_best.pt`.*
+*Note: The script automatically uses a compatible **CUDA GPU** (or Apple Silicon `mps`) if available, and safely falls back to the **CPU** on older hardware or systems without a dedicated GPU. During training, the best checkpoint based on validation loss is automatically saved as `model_best.pt`.*
 
 ### 3. Text Generation
 Once training starts, checkpoints are saved every 1000 steps, and the best validation model is saved to `model_best.pt`. You can generate text from a checkpoint at any time:
